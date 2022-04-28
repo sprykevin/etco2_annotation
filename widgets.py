@@ -3,6 +3,8 @@ from PyQt5 import QtGui, QtWidgets, QtCore
 import sys, os
 import re
 
+import json
+
 import pandas as pd
 import numpy as np
 from peaks_math import compute_peaks
@@ -295,13 +297,6 @@ class Window(QtWidgets.QWidget):
             if peak.index >= self.start:
                 self.all_peaks.pop(peak.index)
 
-        # for key, peak in self.last_peaks.items():
-        #     index_absolute = peak.index + self.start
-        #     try:
-        #         self.all_peaks.pop(index_absolute)
-        #     except KeyError:
-        #         pass
-
     def valid(self):
         """ Valid button callback """
 
@@ -364,8 +359,7 @@ class Window(QtWidgets.QWidget):
             self.app.quit()
             self.close()
 
-    @staticmethod
-    def get_peaks(data, start):
+    def get_peaks(self, data, start):
         order = 2
         # Signal window for annotation
         s_window = data[start: start + window]
@@ -388,8 +382,22 @@ class Window(QtWidgets.QWidget):
         return peaks
 
     def save(self):
-        pd.DataFrame(self.results).to_csv(os.path.join(out_folder, 'Patient {}.csv'.format(self.subject)))
+        pd.DataFrame(self.results).to_csv(os.path.join(out_folder, 'Subject {}.csv'.format(self.subject)))
 
+
+class WindowValidator(Window):
+
+    def __init__(self, subject, data, app, peaks_data):
+        super(WindowValidator, self).__init__(subject, data, app)
+
+        self.peaks_data = peaks_data
+
+    def get_peaks(self, data, start):
+        valid = self.peaks_data[start]['valid']
+        if valid:
+            return json.loads(self.peaks_data[start]['peaks'])
+        else:
+            return []
 
 
 def process_data():
@@ -428,6 +436,43 @@ def process_data():
         # window.window_plotter.ax.plot(data[:fs*30])
 
 
+def display_processed_data():
+    in_folder = 'C:/Spry/Code/UCSF2022/reference/'
+    annotation_folder = 'C:/Spry/Code/UCSF2022/rr_annotation/'
+
+    # Find gt files
+    gt_files = []
+
+    for path, subdirs, files in os.walk(in_folder):
+        for name in files:
+            if 'Raw' in name and 'Subject' in name:
+                gt_files.append(os.path.join(path, name))
+
+    print(gt_files)
+
+    for f in gt_files:
+        app = QtWidgets.QApplication.instance()
+        if not app:
+            app = QtWidgets.QApplication(sys.argv)
+
+
+        # Define data for this subject
+        data = pd.read_csv(f, delimiter='\t', skiprows=2, names=['etco2', 'eto2', 'bp'])['etco2'].to_numpy()
+
+        # Basic filter for noise
+        kernel = signal.firwin(401, (2/60, 45/60), fs=fs, pass_zero=False, window='hamming')
+        data = np.convolve(data, kernel, mode='same')
+        subject = int(re.findall(r'.*?\Subject #(.*) Raw.*', f)[0])
+
+        peaks_data = pd.read_csv('{}/Subject {}.csv'.format(annotation_folder, subject))
+        peaks_data = peaks_data.set_index('time')[['peaks', 'valid']].to_dict('index')
+
+        window = WindowValidator(subject, data, app, peaks_data)
+        window.show()
+        window.update()
+        app.exec_()
+
+
 if __name__ == '__main__':
-    process_data()
+    display_processed_data()
 
